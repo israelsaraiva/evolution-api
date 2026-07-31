@@ -4941,35 +4941,61 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async fetchAllGroups(getParticipants: GetParticipant) {
-    const fetch = Object.values(await this?.client?.groupFetchAllParticipating());
+    // groupFetchAllParticipating can return null/undefined or throw depending on
+    // the socket state — guard so a single failure doesn't 500 the whole list.
+    let participating: any = {};
+    try {
+      participating = (await this?.client?.groupFetchAllParticipating()) || {};
+    } catch (error) {
+      this.logger?.error?.(`fetchAllGroups: groupFetchAllParticipating failed: ${error}`);
+      participating = {};
+    }
+    const fetch = Object.values(participating);
+    const withParticipants = getParticipants?.getParticipants == 'true';
 
     let groups = [];
-    for (const group of fetch) {
-      const picture = await this.profilePicture(group.id);
+    for (const group of fetch as any[]) {
+      try {
+        if (!group || !group.id) continue;
 
-      const result = {
-        id: group.id,
-        subject: group.subject,
-        subjectOwner: group.subjectOwner,
-        subjectTime: group.subjectTime,
-        pictureUrl: picture?.profilePictureUrl,
-        size: group.participants.length,
-        creation: group.creation,
-        owner: group.owner,
-        desc: group.desc,
-        descId: group.descId,
-        restrict: group.restrict,
-        announce: group.announce,
-        isCommunity: group.isCommunity,
-        isCommunityAnnounce: group.isCommunityAnnounce,
-        linkedParent: group.linkedParent,
-      };
+        // Profile pictures are one network round-trip each — only fetch them in
+        // the detailed (participants) mode to keep the list fast and reliable.
+        let pictureUrl = null;
+        if (withParticipants) {
+          try {
+            const picture = await this.profilePicture(group.id);
+            pictureUrl = picture?.profilePictureUrl ?? null;
+          } catch {
+            /* ignore */
+          }
+        }
 
-      if (getParticipants.getParticipants == 'true') {
-        result['participants'] = group.participants;
+        const result: any = {
+          id: group.id,
+          subject: group.subject,
+          subjectOwner: group.subjectOwner,
+          subjectTime: group.subjectTime,
+          pictureUrl,
+          size: Array.isArray(group.participants) ? group.participants.length : 0,
+          creation: group.creation,
+          owner: group.owner,
+          desc: group.desc,
+          descId: group.descId,
+          restrict: group.restrict,
+          announce: group.announce,
+          isCommunity: group.isCommunity,
+          isCommunityAnnounce: group.isCommunityAnnounce,
+          linkedParent: group.linkedParent,
+        };
+
+        if (withParticipants) {
+          result.participants = group.participants;
+        }
+
+        groups = [...groups, result];
+      } catch (error) {
+        this.logger?.error?.(`fetchAllGroups: skipping group ${group?.id}: ${error}`);
       }
-
-      groups = [...groups, result];
     }
 
     return groups;
