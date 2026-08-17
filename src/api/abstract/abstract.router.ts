@@ -47,7 +47,20 @@ export abstract class RouterBroker {
     const instance = request.params as unknown as InstanceDto;
 
     if (request?.query && Object.keys(request.query).length > 0) {
-      Object.assign(instance, sanitizeUntrustedInput(request.query as Record<string, any>));
+      // /instance/fetchInstances is a read-only lookup that authorizes itself:
+      // for a non-global apikey the controller only returns rows whose `token`
+      // matches the caller's key, so instanceId/instanceName are filters here,
+      // not an authorization bypass. Stripping them makes the route ignore the
+      // requested instance and return the whole list — the Manager UI then
+      // falls back to the first entry, so every instance opens as instance #1.
+      const isInstanceLookup = request.originalUrl.includes('/instance/fetchInstances');
+
+      Object.assign(
+        instance,
+        isInstanceLookup
+          ? (request.query as Record<string, any>)
+          : sanitizeUntrustedInput(request.query as Record<string, any>),
+      );
     }
 
     if (request.originalUrl.includes('/instance/create')) {
