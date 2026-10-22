@@ -500,9 +500,9 @@ export class BaileysStartupService extends ChannelStartupService {
       }
 
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      // 408 = request timeout — added per #2501 to avoid reconnect loops on
-      // transient network drops where the server returned a 408 in the close.
-      const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406, 408];
+      // 408 (connection lost / keep-alive timeout) is transient, so it must reconnect: leaving it
+      // here kept the instance closed until a manual restart. Loops are bounded by the delay below.
+      const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
 
       // FIX: Do not reconnect if it's the initial connection (waiting for QR code)
       // This prevents infinite loop that blocks QR code generation
@@ -528,11 +528,12 @@ export class BaileysStartupService extends ChannelStartupService {
       });
 
       if (shouldReconnect) {
-        // Add 3 second delay before reconnection to prevent rapid reconnection loops
-        this.logger.info('Reconnecting in 3 seconds...');
+        // Delay before reconnection to prevent rapid reconnection loops (longer after a timeout)
+        const reconnectDelayMs = statusCode === DisconnectReason.timedOut ? 10000 : 3000;
+        this.logger.info(`Reconnecting in ${reconnectDelayMs / 1000} seconds...`);
         setTimeout(async () => {
           await this.connectToWhatsapp(this.phoneNumber);
-        }, 3000);
+        }, reconnectDelayMs);
       } else {
         this.logger.info(`Skipping reconnection for status code ${statusCode} (code is in codesToNotReconnect list)`);
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
